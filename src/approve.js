@@ -1,7 +1,8 @@
 import 'dotenv/config';
 import path from 'node:path';
-import { launchBrowser, screenshot } from './browser.js';
+import { launchBrowser, screenshot, humanPause } from './browser.js';
 import { approveMember } from './facebook.js';
+import { loadFacebookCookies, saveFacebookCookies } from './cookies.js';
 
 function arg(name, fallback = '') {
   const idx = process.argv.indexOf(name);
@@ -49,6 +50,17 @@ console.log(`[start] headed=${headed}`);
 const { browser, page } = await launchBrowser({ userDataDir, headed });
 
 try {
+  await page.goto('https://www.facebook.com/', { waitUntil: 'domcontentloaded', timeout: 90_000 });
+  const injected = await loadFacebookCookies(page);
+  if (injected.applied) {
+    console.log(`[session] Nạp cookies JSON: ${injected.count} (c_user=${injected.hasCUser})`);
+    await page.reload({ waitUntil: 'networkidle2', timeout: 90_000 });
+    await humanPause(800, 1400);
+    await saveFacebookCookies(page);
+  } else {
+    console.log(`[session] Không có cookies JSON (${injected.reason}), dùng userDataDir`);
+  }
+
   const result = await approveMember(page, { groupId, member });
   if (result.ok) {
     console.log('[ok] Đã bấm Phê duyệt.');

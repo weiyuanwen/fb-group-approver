@@ -9,7 +9,10 @@
   },
   "scripts": {
     "login": "node src/login.js",
+    "export-cookies": "node src/export-cookies.js",
     "approve": "node src/approve.js",
+    "disable-post-approval": "node src/disable-post-approval.js",
+    "serve": "node src/server.js",
     "check-env": "bash scripts/check-env.sh",
     "install-ubuntu": "bash scripts/install-ubuntu.sh"
   },

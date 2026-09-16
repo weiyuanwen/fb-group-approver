@@ -112,11 +112,33 @@ Chạy có cửa sổ ảo (debug trên VPS):
 xvfb-run -a node src/approve.js --headed --member "Nguyễn Văn A"
 ```
 
+## 4. Tắt phê duyệt bài viết (sau thanh toán)
+
+Tiệm Nhà Duy gọi HTTP khi CK khớp. Chạy API trên VPS (không public):
+
+```
+FB_APPROVER_PORT=4001
+FB_APPROVER_TOKEN=...   # cùng giá trị Laravel FB_APPROVER_TOKEN
+npm run serve
+```
+
+Laravel: `FB_APPROVER_URL=http://host.docker.internal:4001`.
+
+CLI:
+
+```
+node src/disable-post-approval.js "https://www.facebook.com/username"
+```
+
+Nếu thành viên đang **bật** phê duyệt bài viết thì script bấm **Tắt**. Nếu đang tắt sẵn thì trả `already_off` (vẫn coi là thành công).
+
 ## Cấu hình `.env`
 
 ```
 FB_GROUP_ID=123456789
 FB_USER_DATA_DIR=./data/chrome-profile
+FB_APPROVER_PORT=4001
+FB_APPROVER_TOKEN=
 ```
 
 `FB_GROUP_ID` là số trên URL `facebook.com/groups/<id>`.
@@ -129,3 +151,5 @@ FB_USER_DATA_DIR=./data/chrome-profile
 | `bash scripts/check-env.sh` | Kiểm tra Node / lib / Chrome / session |
 | `npm run login` | Login trên máy cá nhân, lưu profile |
 | `node src/approve.js --member "..."` | Duyệt 1 người đang chờ |
+| `npm run serve` | HTTP tắt phê duyệt bài viết cho Laravel |
+| `npm run disable-post-approval -- "<url>"` | Tắt phê duyệt 1 thành viên |

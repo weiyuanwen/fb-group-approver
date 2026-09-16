@@ -2,6 +2,7 @@ import 'dotenv/config';
 import path from 'node:path';
 import { launchBrowser, humanPause } from './browser.js';
 import { isLoginPage } from './facebook.js';
+import { saveFacebookCookies } from './cookies.js';
 
 const userDataDir = path.resolve(process.env.FB_USER_DATA_DIR || './data/chrome-profile');
 
@@ -31,7 +32,9 @@ if (await isLoginPage(page)) {
   process.exit(1);
 }
 
+const saved = await saveFacebookCookies(page);
 console.log('[ok] Session đã lưu trong', userDataDir);
-console.log('[next] rsync thư mục này lên VPS (xem README). Đóng Chrome.');
+console.log(`[ok] Cookies JSON: ${saved.file} (c_user=${saved.hasCUser} xs=${saved.hasXs})`);
+console.log('[next] rsync data/chrome-profile và data/fb-cookies.json lên VPS.');
 await browser.close();
 process.exit(0);

@@ -45,9 +45,6 @@ export async function launchBrowser({ userDataDir, headed = false }) {
   });
   const pages = await browser.pages();
   const page = pages[0] || (await browser.newPage());
-  await page.setUserAgent(
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-  );
   return { browser, page };
 }
 

@@ -1,8 +1,6 @@
 import { existsSync } from 'node:fs';
 import { humanPause, humanType, screenshot } from './browser.js';
 
-const LOGIN_HINTS = ['log in', 'đăng nhập', 'login', 'email or phone', 'email hoặc số điện thoại'];
-
 export function parseMemberQuery(raw) {
   const input = String(raw || '').trim();
   if (!input) throw new Error('Thiếu --member (URL profile hoặc tên).');
@@ -38,9 +36,9 @@ export function memberRequestsUrl(groupId) {
 
 export async function isLoginPage(page) {
   const href = page.url();
-  if (/\/login|checkpoint|two_step/i.test(href)) return true;
-  const text = ((await page.evaluate(() => document.body?.innerText || '')) || '').toLowerCase();
-  return LOGIN_HINTS.some((h) => text.includes(h)) && text.includes('facebook') && !/member-requests|pending/i.test(href);
+  if (/\/login\.php|\/checkpoint|two_step/i.test(href)) return true;
+  const cookies = await page.cookies('https://www.facebook.com');
+  return !cookies.some((c) => c.name === 'c_user');
 }
 
 export async function assertLoggedIn(page) {
