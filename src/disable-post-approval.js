@@ -73,7 +73,12 @@ export async function disableMemberPostApproval({ member, uid, groupId, headed =
     });
     await humanPause(1800, 2600);
     await page.keyboard.press('Escape');
-    await humanPause(500, 800);
+    await page.evaluate(() => window.scrollBy(0, 900));
+    await humanPause(800, 1200);
+    await page.waitForFunction(
+      () => /đang (bật|tắt) phê duyệt bài viết/i.test(document.body.innerText || ''),
+      { timeout: 20_000 },
+    ).catch(() => {});
 
     const pageStatus = await page.evaluate(() => {
       const compact = (el) => (el.innerText || '').replace(/\s+/g, ' ').trim();
