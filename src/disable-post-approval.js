@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { launchBrowser, humanPause, screenshot } from './browser.js';
-import { loadFacebookCookies, saveFacebookCookies } from './cookies.js';
+import { ensureFacebookSession } from './cookies.js';
 
 function groupIdFromEnv(override) {
   return String(override || process.env.FB_GROUP_ID || '782860725537921');
@@ -58,14 +58,10 @@ export async function disableMemberPostApproval({ member, uid, groupId, headed =
   page.setDefaultNavigationTimeout(45_000);
 
   try {
-    await page.goto('https://www.facebook.com/', { waitUntil: 'domcontentloaded', timeout: 45_000 });
-    await loadFacebookCookies(page);
-    await page.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 });
-    await humanPause(800, 1400);
-    if (!(await page.cookies('https://www.facebook.com')).some((c) => c.name === 'c_user')) {
+    const session = await ensureFacebookSession(page);
+    if (!session.ok) {
       return { ok: false, reason: 'not-logged-in', shot: await screenshot(page, 'not-logged-in') };
     }
-    await saveFacebookCookies(page);
 
     await page.goto(`https://www.facebook.com/groups/${gid}/user/${userId}/`, {
       waitUntil: 'domcontentloaded',

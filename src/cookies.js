@@ -42,3 +42,33 @@ export async function loadFacebookCookies(page) {
   const names = raw.map((c) => c.name);
   return { applied: true, count: raw.length, hasCUser: names.includes('c_user'), hasXs: names.includes('xs') };
 }
+
+export async function hasCUserCookie(page) {
+  const cookies = await page.cookies();
+  return cookies.some((cookie) => cookie.name === 'c_user');
+}
+
+/**
+ * Prefer the live Chrome profile session. Re-injecting the JSON cookie jar
+ * on top of an already-logged-in profile can make Facebook drop c_user/xs.
+ */
+export async function ensureFacebookSession(page) {
+  await page.goto('https://www.facebook.com/', { waitUntil: 'domcontentloaded', timeout: 45_000 });
+  if (await hasCUserCookie(page)) {
+    await saveFacebookCookies(page);
+    return { ok: true, via: 'profile' };
+  }
+
+  const injected = await loadFacebookCookies(page);
+  if (!injected.applied || !injected.hasCUser) {
+    return { ok: false, via: injected.reason || 'missing-cookies' };
+  }
+
+  await page.goto('https://www.facebook.com/', { waitUntil: 'domcontentloaded', timeout: 45_000 });
+  if (await hasCUserCookie(page)) {
+    await saveFacebookCookies(page);
+    return { ok: true, via: 'cookies' };
+  }
+
+  return { ok: false, via: 'not-logged-in' };
+}

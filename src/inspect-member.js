@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { launchBrowser, humanPause, screenshot, sleep } from './browser.js';
-import { loadFacebookCookies, saveFacebookCookies } from './cookies.js';
+import { ensureFacebookSession } from './cookies.js';
 
 function groupIdFromEnv(override) {
   return String(override || process.env.FB_GROUP_ID || '782860725537921');
@@ -77,18 +77,14 @@ export async function inspectMemberProfile({ url, groupId, headed = false, captu
   page.setDefaultNavigationTimeout(45_000);
 
   try {
-    await page.goto('https://www.facebook.com/', { waitUntil: 'domcontentloaded', timeout: 45_000 });
-    await loadFacebookCookies(page);
-    await page.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 });
-    await humanPause(700, 1200);
-    if (!(await page.cookies('https://www.facebook.com')).some((c) => c.name === 'c_user')) {
+    const session = await ensureFacebookSession(page);
+    if (!session.ok) {
       return {
         ok: false,
         reason: 'not-logged-in',
         shot: capture ? await screenshot(page, 'lookup-not-logged-in') : null,
       };
     }
-    await saveFacebookCookies(page);
 
     await page.goto(input, { waitUntil: 'domcontentloaded', timeout: 45_000 });
     await humanPause(1800, 2600);
