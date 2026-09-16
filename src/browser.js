@@ -28,6 +28,19 @@ export function resolveProfileDir(userDataDir) {
   return userDataDir;
 }
 
+export async function launchBrowserRetry({ userDataDir, headed = false } = {}) {
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await launchBrowser({ userDataDir, headed });
+    } catch (error) {
+      lastError = error;
+      await sleep(1200);
+    }
+  }
+  throw lastError;
+}
+
 export async function launchBrowser({ userDataDir, headed = false }) {
   const dir = resolveProfileDir(userDataDir);
   const browser = await puppeteer.launch({

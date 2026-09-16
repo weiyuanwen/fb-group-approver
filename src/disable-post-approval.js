@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { launchBrowser, humanPause, screenshot } from './browser.js';
+import { humanPause, launchBrowserRetry, screenshot } from './browser.js';
 import { ensureFacebookSession } from './cookies.js';
 
 function groupIdFromEnv(override) {
@@ -12,35 +12,84 @@ function uidFromMember(member, uid) {
   return raw.match(/profile\.php\?id=(\d+)/i)?.[1] || raw.match(/\/(?:user|profile)\/(\d+)/i)?.[1] || raw.match(/(\d{6,})/)?.[1] || null;
 }
 
-function clickMemberActionsMenu() {
-  const labelRe = /hành động đối với thành viên|member actions menu|hành động thành viên/i;
-  const labeled = [...document.querySelectorAll('[aria-label]')].find((el) => {
-    const r = el.getBoundingClientRect();
-    return r.width > 12 && r.height > 12 && r.top > 80 && r.top < 720 && labelRe.test(el.getAttribute('aria-label') || '');
-  });
-  if (labeled) {
-    labeled.click();
-    return 'aria';
+function readRestrictionStatus() {
+  const text = (document.body?.innerText || '').replace(/\s+/g, ' ').trim();
+  if (/đang tắt phê duyệt bài viết/i.test(text) || /hiện không có hạn chế/i.test(text)) {
+    return { kind: 'off', label: 'off' };
   }
+  if (/đang bật phê duyệt bài viết/i.test(text)) {
+    return { kind: 'on', label: 'Đang bật phê duyệt bài viết' };
+  }
+  return { kind: 'unknown', label: null };
+}
 
-  const buttons = [...document.querySelectorAll('[role="button"]')].filter((el) => {
-    const r = el.getBoundingClientRect();
-    const aria = el.getAttribute('aria-label') || '';
-    const text = (el.innerText || '').replace(/\s+/g, ' ').trim();
-    if (r.top < 400 || r.top > 620) return false;
-    if (r.left < 980) return false;
-    if (r.width < 20 || r.width > 52 || r.height < 20 || r.height > 52) return false;
-    if (/xem trang cá nhân|nhắn tin|message|bạn bè|messenger|thông báo/i.test(`${aria} ${text}`)) return false;
-    return true;
+async function openMemberPage(page, gid, userId) {
+  await page.goto(`https://www.facebook.com/groups/${gid}/user/${userId}/`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 45_000,
   });
-  buttons.sort((a, b) => {
-    const ra = a.getBoundingClientRect();
-    const rb = b.getBoundingClientRect();
-    return ra.top - rb.top || rb.left - ra.left;
+  await humanPause(1800, 2600);
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => window.scrollBy(0, 400));
+  await humanPause(700, 1100);
+  await page.waitForFunction(
+    () => /tóm tắt về thành viên|hạn chế|đang (bật|tắt) phê duyệt bài viết|hiện không có hạn chế/i.test(document.body.innerText || ''),
+    { timeout: 20_000 },
+  ).catch(() => {});
+}
+
+async function confirmIfAsked(page) {
+  await humanPause(800, 1300);
+  await page.evaluate(() => {
+    const compact = (el) => (el.innerText || '').replace(/\s+/g, ' ').trim();
+    const btn = [...document.querySelectorAll('div[role="button"], button')].find((el) => {
+      const t = compact(el);
+      return /^(tắt|tắt tính năng|xác nhận|lưu|save|confirm|xong|done|ok)$/i.test(t);
+    });
+    btn?.click();
   });
-  if (!buttons[0]) return null;
-  buttons[0].click();
-  return 'overflow';
+  await humanPause(1400, 2000);
+}
+
+async function clickTurnOffFromPostMenu(page) {
+  const opened = await page.evaluate(() => {
+    const buttons = [...document.querySelectorAll('[aria-label]')].filter((el) => {
+      const r = el.getBoundingClientRect();
+      const aria = el.getAttribute('aria-label') || '';
+      return r.width > 12 && r.height > 12 && r.top > 80 && /hành động đối với bài viết này/i.test(aria);
+    });
+    if (!buttons[0]) return null;
+    buttons[0].click();
+    return buttons[0].getAttribute('aria-label');
+  });
+  if (!opened) return { ok: false, reason: 'post_menu_not_found' };
+
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('[role="menuitem"]')].some((el) =>
+      /tắt phê duyệt bài viết/i.test(el.innerText || ''),
+    ),
+    { timeout: 8000 },
+  ).catch(() => {});
+  await humanPause(400, 700);
+
+  const action = await page.evaluate(() => {
+    const items = [...document.querySelectorAll('[role="menuitem"]')].map((el) => ({
+      el,
+      label: (el.innerText || '').replace(/\s+/g, ' ').trim(),
+    }));
+    const off = items.find((item) => /tắt phê duyệt bài viết/i.test(item.label) && !/bình luận/i.test(item.label));
+    if (off) {
+      off.el.click();
+      return { kind: 'disable', label: off.label };
+    }
+    const on = items.find((item) => /bật phê duyệt bài viết|bật tính năng phê duyệt bài viết/i.test(item.label));
+    if (on) {
+      return { kind: 'already_off', label: on.label };
+    }
+    return { kind: 'unknown', labels: items.map((item) => item.label).filter(Boolean).slice(0, 20) };
+  });
+
+  return { ok: action.kind === 'disable' || action.kind === 'already_off', opened, action };
 }
 
 export async function disableMemberPostApproval({ member, uid, groupId, headed = false } = {}) {
@@ -50,10 +99,17 @@ export async function disableMemberPostApproval({ member, uid, groupId, headed =
     return { ok: false, reason: 'missing_uid' };
   }
 
-  const { browser, page } = await launchBrowser({
-    userDataDir: path.resolve(process.env.FB_USER_DATA_DIR || './data/chrome-profile'),
-    headed,
-  });
+  let browser;
+  let page;
+  try {
+    ({ browser, page } = await launchBrowserRetry({
+      userDataDir: path.resolve(process.env.FB_USER_DATA_DIR || './data/chrome-profile'),
+      headed,
+    }));
+  } catch (error) {
+    return { ok: false, reason: error.message || 'browser_busy' };
+  }
+
   page.setDefaultTimeout(45_000);
   page.setDefaultNavigationTimeout(45_000);
 
@@ -63,179 +119,57 @@ export async function disableMemberPostApproval({ member, uid, groupId, headed =
       return { ok: false, reason: 'not-logged-in', shot: await screenshot(page, 'not-logged-in') };
     }
 
-    await page.goto(`https://www.facebook.com/groups/${gid}/user/${userId}/`, {
-      waitUntil: 'domcontentloaded',
-      timeout: 45_000,
-    });
-    await humanPause(1800, 2600);
-    await page.keyboard.press('Escape');
-    await page.evaluate(() => window.scrollBy(0, 900));
-    await humanPause(800, 1200);
-    await page.waitForFunction(
-      () => /đang (bật|tắt) phê duyệt bài viết/i.test(document.body.innerText || ''),
-      { timeout: 20_000 },
-    ).catch(() => {});
-
-    const pageStatus = await page.evaluate(() => {
-      const compact = (el) => (el.innerText || '').replace(/\s+/g, ' ').trim();
-      const smallest = (re) => {
-        const matches = [...document.querySelectorAll('span, div, [role="button"], a, h2, h3')].filter((el) =>
-          re.test(compact(el)),
-        );
-        matches.sort((a, b) => compact(a).length - compact(b).length);
-        return matches[0] || null;
-      };
-      const offState = smallest(/đang tắt phê duyệt bài viết/i);
-      if (offState) return { kind: 'already_off', label: compact(offState) };
-      const onState = smallest(/đang bật phê duyệt bài viết/i);
-      if (onState) {
-        onState.scrollIntoView({ block: 'center', inline: 'nearest' });
-        const clickable = onState.closest('[role="button"], a, [tabindex="0"]') || onState;
-        clickable.click();
-        return { kind: 'open_restriction', label: compact(onState) };
-      }
-      return { kind: 'missing' };
-    });
-
-    if (pageStatus.kind === 'already_off') {
-      return { ok: true, reason: 'already_off', uid: userId, opened: 'summary', action: pageStatus };
+    await openMemberPage(page, gid, userId);
+    let status = await page.evaluate(readRestrictionStatus);
+    if (status.kind === 'off') {
+      return { ok: true, reason: 'already_off', uid: userId, verified: status };
     }
 
-    if (pageStatus.kind === 'open_restriction') {
-      await humanPause(1000, 1600);
-      await page.waitForFunction(() => {
-        return [...document.querySelectorAll('[role="dialog"], [role="menu"]')].some((el) =>
-          /phê duyệt bài viết|tắt tính năng|turn off/i.test(el.innerText || ''),
-        );
-      }, { timeout: 8000 }).catch(() => {});
-      const restriction = await page.evaluate(() => {
-        const items = [...document.querySelectorAll('[role="menuitem"]')].map((el) => ({
-          el,
-          label: (el.innerText || '').replace(/\s+/g, ' ').trim(),
-        }));
-        const off = items.find((item) => /tắt.*phê duyệt bài viết|turn off post approval/i.test(item.label));
-        if (off) {
-          off.el.click();
-          return { kind: 'disable', label: off.label, via: 'summary_menu' };
-        }
-        const on = items.find((item) => /bật.*phê duyệt bài viết|turn on post approval/i.test(item.label));
-        if (on) {
-          return { kind: 'already_off', label: on.label, via: 'summary_menu' };
-        }
-
-        const roots = [...document.querySelectorAll('[role="dialog"], [role="menu"]')].filter((el) => {
-          const r = el.getBoundingClientRect();
-          return r.width > 120 && r.height > 40;
-        });
-        const root =
-          roots.find((el) => /phê duyệt bài viết/i.test(el.innerText || '')) ||
-          roots.find((el) => !/đoạn chat|mã pin|messenger/i.test(el.innerText || '')) ||
-          null;
-        if (!root) {
-          return { kind: 'unknown', dialog: 'no_restriction_dialog' };
-        }
-
-        const switches = [...root.querySelectorAll('[role="switch"]')];
-        const sw =
-          switches.find((el) => {
-            const blob = `${el.getAttribute('aria-label') || ''} ${(el.parentElement?.innerText || '')}`;
-            return /phê duyệt|approval/i.test(blob);
-          }) || (switches.length === 1 ? switches[0] : null);
-        if (sw) {
-          if (sw.getAttribute('aria-checked') !== 'true') {
-            return { kind: 'already_off', label: sw.getAttribute('aria-label') || 'switch', via: 'summary_switch' };
-          }
-          sw.click();
-          return { kind: 'disable', label: sw.getAttribute('aria-label') || 'switch', via: 'summary_switch' };
-        }
-
-        const btn = [...root.querySelectorAll('div[role="button"], button')].find((el) => {
-          const t = (el.innerText || '').trim();
-          return /^(tắt|tắt tính năng|xác nhận|lưu|save|confirm|xong)$/i.test(t);
-        });
-        if (btn) {
-          const t = (btn.innerText || '').trim();
-          btn.click();
-          return { kind: 'disable', label: t, via: 'summary_button' };
-        }
-
-        return {
-          kind: 'unknown',
-          dialog: (root.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 500),
-        };
-      });
-
-      if (restriction.kind === 'already_off') {
-        return { ok: true, reason: 'already_off', uid: userId, opened: 'summary', action: restriction };
-      }
-      if (restriction.kind === 'disable') {
-        await humanPause(1200, 1800);
-        await page.evaluate(() => {
-          const btn = [...document.querySelectorAll('div[role="button"], button')].find((el) => {
-            const t = (el.innerText || '').trim();
-            return /^(tắt|xác nhận|lưu|save|confirm|xong|done|ok)$/i.test(t);
-          });
-          btn?.click();
-        });
-        await humanPause(1500, 2200);
-        return { ok: true, reason: 'disabled', uid: userId, opened: 'summary', action: restriction };
-      }
-    }
-
-    let opened = null;
-    for (let attempt = 0; attempt < 6 && !opened; attempt += 1) {
-      opened = await page.evaluate(clickMemberActionsMenu);
-      if (!opened) await humanPause(500, 800);
-    }
-    if (!opened) {
-      return { ok: false, reason: 'menu_not_found', uid: userId, shot: await screenshot(page, 'no-member-menu') };
-    }
-    await humanPause(900, 1400);
-
-    const action = await page.evaluate(() => {
-      const items = [...document.querySelectorAll('[role="menuitem"]')].map((el) => ({
-        el,
-        label: (el.innerText || '').replace(/\s+/g, ' ').trim(),
-      }));
-      const off = items.find((item) => /tắt.*phê duyệt bài viết|turn off post approval/i.test(item.label));
-      if (off) {
-        off.el.click();
-        return { kind: 'disable', label: off.label };
-      }
-      const on = items.find((item) => /bật.*phê duyệt bài viết|turn on post approval/i.test(item.label));
-      if (on) {
-        return { kind: 'already_off', label: on.label };
-      }
-      return { kind: 'unknown', labels: items.map((item) => item.label) };
-    });
-
-    if (action.kind === 'already_off') {
-      return { ok: true, reason: 'already_off', uid: userId, opened, action };
-    }
-    if (action.kind !== 'disable') {
+    const clicked = await clickTurnOffFromPostMenu(page);
+    if (!clicked.ok) {
       return {
         ok: false,
-        reason: 'toggle_not_found',
+        reason: clicked.reason || clicked.action?.kind || 'toggle_not_found',
         uid: userId,
-        opened,
-        action,
+        opened: clicked.opened || null,
+        action: clicked.action || null,
+        before: status,
         shot: await screenshot(page, 'no-toggle'),
       };
     }
 
-    await humanPause(1200, 1800);
-    await page.evaluate(() => {
-      const btn = [...document.querySelectorAll('div[role="button"], button')].find((el) => {
-        const t = (el.innerText || '').trim();
-        return /^(tắt|xác nhận|lưu|save|confirm|xong|done|ok)$/i.test(t);
-      });
-      btn?.click();
-    });
-    await humanPause(1500, 2200);
+    if (clicked.action?.kind === 'disable') {
+      await confirmIfAsked(page);
+    }
 
-    return { ok: true, reason: 'disabled', uid: userId, opened, action };
+    await openMemberPage(page, gid, userId);
+    status = await page.evaluate(readRestrictionStatus);
+    if (status.kind === 'off') {
+      return {
+        ok: true,
+        reason: clicked.action?.kind === 'already_off' ? 'already_off' : 'disabled',
+        uid: userId,
+        opened: clicked.opened,
+        action: clicked.action,
+        verified: status,
+      };
+    }
+
+    return {
+      ok: false,
+      reason: 'still_on',
+      uid: userId,
+      opened: clicked.opened,
+      action: clicked.action,
+      verified: status,
+      shot: await screenshot(page, 'still-on'),
+    };
+  } catch (error) {
+    return { ok: false, reason: error.message || 'disable_error' };
   } finally {
-    await browser.close();
+    if (browser) {
+      await browser.close();
+    }
   }
 }
 

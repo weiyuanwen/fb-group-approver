@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { launchBrowser, humanPause, screenshot, sleep } from './browser.js';
+import { launchBrowserRetry, humanPause, screenshot } from './browser.js';
 import { ensureFacebookSession } from './cookies.js';
 
 function groupIdFromEnv(override) {
@@ -40,19 +40,6 @@ function readProfileFromDom() {
     username: usernamePath && !reserved.includes(usernamePath) ? usernamePath : null,
     id: metaId || hrefId || htmlId || null,
   };
-}
-
-async function launchBrowserRetry({ userDataDir, headed = false } = {}) {
-  let lastError;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      return await launchBrowser({ userDataDir, headed });
-    } catch (error) {
-      lastError = error;
-      await sleep(1200);
-    }
-  }
-  throw lastError;
 }
 
 export async function inspectMemberProfile({ url, groupId, headed = false, capture = false } = {}) {
