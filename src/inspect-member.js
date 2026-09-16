@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { launchBrowser, humanPause, screenshot } from './browser.js';
+import { launchBrowser, humanPause, screenshot, sleep } from './browser.js';
 import { loadFacebookCookies, saveFacebookCookies } from './cookies.js';
 
 function groupIdFromEnv(override) {
@@ -42,6 +42,19 @@ function readProfileFromDom() {
   };
 }
 
+async function launchBrowserRetry({ userDataDir, headed = false } = {}) {
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await launchBrowser({ userDataDir, headed });
+    } catch (error) {
+      lastError = error;
+      await sleep(1200);
+    }
+  }
+  throw lastError;
+}
+
 export async function inspectMemberProfile({ url, groupId, headed = false, capture = false } = {}) {
   const input = canonicalFacebookUrl(url);
   if (!input) {
@@ -49,10 +62,17 @@ export async function inspectMemberProfile({ url, groupId, headed = false, captu
   }
 
   const gid = groupIdFromEnv(groupId);
-  const { browser, page } = await launchBrowser({
-    userDataDir: path.resolve(process.env.FB_USER_DATA_DIR || './data/chrome-profile'),
-    headed,
-  });
+  let browser;
+  let page;
+  try {
+    ({ browser, page } = await launchBrowserRetry({
+      userDataDir: path.resolve(process.env.FB_USER_DATA_DIR || './data/chrome-profile'),
+      headed,
+    }));
+  } catch (error) {
+    return { ok: false, reason: error.message || 'browser_busy' };
+  }
+
   page.setDefaultTimeout(45_000);
   page.setDefaultNavigationTimeout(45_000);
 
@@ -115,7 +135,11 @@ export async function inspectMemberProfile({ url, groupId, headed = false, captu
       joined: group?.joined || null,
       summary: group?.summary || null,
     };
+  } catch (error) {
+    return { ok: false, reason: error.message || 'inspect_error' };
   } finally {
-    await browser.close();
+    if (browser) {
+      await browser.close();
+    }
   }
 }
