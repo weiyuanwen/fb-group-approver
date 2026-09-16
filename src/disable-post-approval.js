@@ -27,8 +27,8 @@ function clickMemberActionsMenu() {
     const r = el.getBoundingClientRect();
     const aria = el.getAttribute('aria-label') || '';
     const text = (el.innerText || '').replace(/\s+/g, ' ').trim();
-    if (r.top < 280 || r.top > 640) return false;
-    if (r.left < 860) return false;
+    if (r.top < 420 || r.top > 600) return false;
+    if (r.left < 1000) return false;
     if (r.width < 20 || r.width > 52 || r.height < 20 || r.height > 52) return false;
     if (/xem trang cá nhân|nhắn tin|message|bạn bè|messenger|thông báo/i.test(`${aria} ${text}`)) return false;
     return true;
@@ -108,7 +108,15 @@ export async function disableMemberPostApproval({ member, uid, groupId, headed =
     });
 
     if (action.kind === 'open_limits') {
-      await humanPause(1200, 1800);
+      await humanPause(800, 1200);
+      await page.waitForFunction(() => {
+        return [...document.querySelectorAll('[role="dialog"]')].some((el) => {
+          const r = el.getBoundingClientRect();
+          const t = el.innerText || '';
+          return r.width > 160 && r.height > 80 && /giới hạn|phê duyệt|limit activity|post approval/i.test(t);
+        });
+      }, { timeout: 8000 }).catch(() => {});
+      await humanPause(400, 700);
       const nested = await page.evaluate(() => {
         const items = [...document.querySelectorAll('[role="menuitem"]')].map((el) => ({
           el,
@@ -129,7 +137,18 @@ export async function disableMemberPostApproval({ member, uid, groupId, headed =
           return { kind: 'disable', label: named.label, via: 'named_item' };
         }
 
-        const root = document.querySelector('[role="dialog"]') || document.body;
+        const dialogs = [...document.querySelectorAll('[role="dialog"]')].filter((el) => {
+          const r = el.getBoundingClientRect();
+          return r.width > 160 && r.height > 80;
+        });
+        const root =
+          dialogs.find((el) => /giới hạn|phê duyệt|limit activity|post approval/i.test(el.innerText || '')) ||
+          dialogs.find((el) => !/đoạn chat|mã pin|messenger/i.test(el.innerText || '')) ||
+          null;
+        if (!root) {
+          return { kind: 'unknown', labels: items.map((item) => item.label), dialog: 'no_limit_dialog' };
+        }
+
         const switches = [...root.querySelectorAll('[role="switch"]')];
         for (const sw of switches) {
           const cluster = sw.closest('[role="listitem"], [role="row"], label') || sw.parentElement;
