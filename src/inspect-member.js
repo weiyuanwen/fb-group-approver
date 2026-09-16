@@ -6,6 +6,13 @@ function groupIdFromEnv(override) {
   return String(override || process.env.FB_GROUP_ID || '782860725537921');
 }
 
+function canonicalFacebookUrl(url) {
+  return String(url || '')
+    .trim()
+    .replace(/^https?:\/\/(?:web|m|mbasic)\.facebook\.com/i, 'https://www.facebook.com')
+    .replace(/^https?:\/\/facebook\.com/i, 'https://www.facebook.com');
+}
+
 function readProfileFromDom() {
   const text = (document.body?.innerText || '').replace(/\s+/g, ' ').trim();
   const html = document.documentElement.innerHTML;
@@ -36,7 +43,7 @@ function readProfileFromDom() {
 }
 
 export async function inspectMemberProfile({ url, groupId, headed = false, capture = false } = {}) {
-  const input = String(url || '').trim();
+  const input = canonicalFacebookUrl(url);
   if (!input) {
     return { ok: false, reason: 'missing_url' };
   }
