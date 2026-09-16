@@ -77,17 +77,18 @@ export async function disableMemberPostApproval({ member, uid, groupId, headed =
 
     const pageStatus = await page.evaluate(() => {
       const compact = (el) => (el.innerText || '').replace(/\s+/g, ' ').trim();
-      const nodes = [...document.querySelectorAll('span, div, [role="button"], a')];
-      const offState = nodes.find((el) => {
-        const t = compact(el);
-        return t.length < 90 && /đang tắt phê duyệt bài viết/i.test(t);
-      });
+      const smallest = (re) => {
+        const matches = [...document.querySelectorAll('span, div, [role="button"], a, h2, h3')].filter((el) =>
+          re.test(compact(el)),
+        );
+        matches.sort((a, b) => compact(a).length - compact(b).length);
+        return matches[0] || null;
+      };
+      const offState = smallest(/đang tắt phê duyệt bài viết/i);
       if (offState) return { kind: 'already_off', label: compact(offState) };
-      const onState = nodes.find((el) => {
-        const t = compact(el);
-        return t.length < 90 && /đang bật phê duyệt bài viết/i.test(t);
-      });
+      const onState = smallest(/đang bật phê duyệt bài viết/i);
       if (onState) {
+        onState.scrollIntoView({ block: 'center', inline: 'nearest' });
         const clickable = onState.closest('[role="button"], a, [tabindex="0"]') || onState;
         clickable.click();
         return { kind: 'open_restriction', label: compact(onState) };
@@ -203,11 +204,6 @@ export async function disableMemberPostApproval({ member, uid, groupId, headed =
       const on = items.find((item) => /bật.*phê duyệt bài viết|turn on post approval/i.test(item.label));
       if (on) {
         return { kind: 'already_off', label: on.label };
-      }
-      const limit = items.find((item) => /giới hạn hoạt động|limit activity/i.test(item.label));
-      if (limit) {
-        limit.el.click();
-        return { kind: 'open_limits', labels: items.map((item) => item.label) };
       }
       return { kind: 'unknown', labels: items.map((item) => item.label) };
     });
