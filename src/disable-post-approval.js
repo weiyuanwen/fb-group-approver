@@ -99,8 +99,70 @@ export async function disableMemberPostApproval({ member, uid, groupId, headed =
       if (on) {
         return { kind: 'already_off', label: on.label };
       }
+      const limit = items.find((item) => /giới hạn hoạt động|limit activity/i.test(item.label));
+      if (limit) {
+        limit.el.click();
+        return { kind: 'open_limits', labels: items.map((item) => item.label) };
+      }
       return { kind: 'unknown', labels: items.map((item) => item.label) };
     });
+
+    if (action.kind === 'open_limits') {
+      await humanPause(1200, 1800);
+      const nested = await page.evaluate(() => {
+        const items = [...document.querySelectorAll('[role="menuitem"]')].map((el) => ({
+          el,
+          label: (el.innerText || '').replace(/\s+/g, ' ').trim(),
+        }));
+        const off = items.find((item) => /tắt.*phê duyệt bài viết|turn off post approval/i.test(item.label));
+        if (off) {
+          off.el.click();
+          return { kind: 'disable', label: off.label };
+        }
+        const on = items.find((item) => /bật.*phê duyệt bài viết|turn on post approval/i.test(item.label));
+        if (on) {
+          return { kind: 'already_off', label: on.label };
+        }
+        const named = items.find((item) => /^phê duyệt bài viết$|^post approval$/i.test(item.label));
+        if (named) {
+          named.el.click();
+          return { kind: 'disable', label: named.label, via: 'named_item' };
+        }
+
+        const root = document.querySelector('[role="dialog"]') || document.body;
+        const switches = [...root.querySelectorAll('[role="switch"]')];
+        for (const sw of switches) {
+          const cluster = sw.closest('[role="listitem"], [role="row"], label') || sw.parentElement;
+          const blob = `${sw.getAttribute('aria-label') || ''} ${(cluster?.innerText || '')}`.replace(/\s+/g, ' ').trim();
+          if (!/phê duyệt bài viết|post approval/i.test(blob)) continue;
+          if (sw.getAttribute('aria-checked') !== 'true') {
+            return { kind: 'already_off', label: blob.slice(0, 160) };
+          }
+          sw.click();
+          return { kind: 'disable', label: blob.slice(0, 160), via: 'switch' };
+        }
+
+        const hit = [...root.querySelectorAll('span, div, [role="button"]')].find((el) => {
+          const t = (el.innerText || '').replace(/\s+/g, ' ').trim();
+          return t.length >= 8 && t.length < 90 && /phê duyệt bài viết/i.test(t);
+        });
+        if (hit) {
+          hit.click();
+          return { kind: 'disable', label: (hit.innerText || '').trim(), via: 'row' };
+        }
+
+        return {
+          kind: 'unknown',
+          labels: items.map((item) => item.label),
+          dialog: (root.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 600),
+        };
+      });
+      action.kind = nested.kind;
+      action.label = nested.label;
+      action.via = nested.via;
+      action.nested_labels = nested.labels;
+      action.dialog = nested.dialog;
+    }
 
     if (action.kind === 'already_off') {
       return { ok: true, reason: 'already_off', uid: userId, opened, action };
